@@ -1,0 +1,507 @@
+import streamlit as st
+import json
+import os
+from datetime import datetime
+from collections import defaultdict
+
+# Konfiguration
+st.set_page_config(
+    page_title="Ernährungsplaner",
+    page_icon="🍽️",
+    layout="wide"
+)
+
+# Datei für Datenspeicherung
+DATA_FILE = "meal_planner_data.json"
+
+# Datenstruktur initialisieren
+def load_data():
+    """Lädt Daten aus JSON-Datei"""
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {
+        "zutaten": {},
+        "rezepte": {},
+        "wochenplan": {
+            "Montag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
+            "Dienstag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
+            "Mittwoch": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
+            "Donnerstag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
+            "Freitag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
+            "Samstag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
+            "Sonntag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None}
+        }
+    }
+
+def save_data(data):
+    """Speichert Daten in JSON-Datei"""
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# Hilfsfunktionen
+def calculate_recipe_nutrition(rezept, zutaten):
+    """Berechnet Nährwerte für ein Rezept"""
+    total = {"protein": 0, "kohlenhydrate": 0, "fett": 0, "kalorien": 0}
+    
+    for zutat_name, menge in rezept["zutaten"].items():
+        if zutat_name in zutaten:
+            zutat = zutaten[zutat_name]
+            faktor = menge / 100  # Umrechnung von g auf pro 100g
+            total["protein"] += zutat["protein"] * faktor
+            total["kohlenhydrate"] += zutat["kohlenhydrate"] * faktor
+            total["fett"] += zutat["fett"] * faktor
+            total["kalorien"] += zutat["kalorien"] * faktor
+    
+    return total
+
+def generate_shopping_list(data):
+    """Generiert Einkaufsliste aus Wochenplan"""
+    einkaufsliste = defaultdict(float)
+    
+    for tag, mahlzeiten in data["wochenplan"].items():
+        for mahlzeit, rezept_name in mahlzeiten.items():
+            if rezept_name and rezept_name in data["rezepte"]:
+                rezept = data["rezepte"][rezept_name]
+                for zutat, menge in rezept["zutaten"].items():
+                    einkaufsliste[zutat] += menge
+    
+    return dict(einkaufsliste)
+
+# Session State initialisieren
+if 'data' not in st.session_state:
+    st.session_state.data = load_data()
+
+# Hauptapp
+st.title("🍽️ Ernährungsplaner")
+st.markdown("---")
+
+# Tabs für verschiedene Bereiche
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Dashboard", 
+    "🥕 Zutaten", 
+    "📖 Rezepte", 
+    "📅 Wochenplan", 
+    "🛒 Einkaufsliste"
+])
+
+# TAB 1: DASHBOARD
+with tab1:
+    st.header("Wochenübersicht")
+    
+    data = st.session_state.data
+    
+    # Berechne Gesamtnährwerte für die Woche
+    weekly_totals = {"protein": 0, "kohlenhydrate": 0, "fett": 0, "kalorien": 0}
+    meal_count = 0
+    
+    for tag, mahlzeiten in data["wochenplan"].items():
+        for mahlzeit, rezept_name in mahlzeiten.items():
+            if rezept_name and rezept_name in data["rezepte"]:
+                meal_count += 1
+                nutrition = calculate_recipe_nutrition(
+                    data["rezepte"][rezept_name], 
+                    data["zutaten"]
+                )
+                for key in weekly_totals:
+                    weekly_totals[key] += nutrition[key]
+    
+    # Statistiken anzeigen
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Gesamt Kalorien", f"{weekly_totals['kalorien']:.0f} kcal")
+    with col2:
+        st.metric("Gesamt Protein", f"{weekly_totals['protein']:.1f} g")
+    with col3:
+        st.metric("Gesamt Kohlenhydrate", f"{weekly_totals['kohlenhydrate']:.1f} g")
+    with col4:
+        st.metric("Gesamt Fett", f"{weekly_totals['fett']:.1f} g")
+    
+    st.markdown("---")
+    
+    # Durchschnitt pro Tag
+    if meal_count > 0:
+        st.subheader("Durchschnitt pro Tag (bei vollständigem Plan)")
+        daily_avg = {k: v / 7 for k, v in weekly_totals.items()}
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Ø Kalorien/Tag", f"{daily_avg['kalorien']:.0f} kcal")
+        with col2:
+            st.metric("Ø Protein/Tag", f"{daily_avg['protein']:.1f} g")
+        with col3:
+            st.metric("Ø Kohlenhydrate/Tag", f"{daily_avg['kohlenhydrate']:.1f} g")
+        with col4:
+            st.metric("Ø Fett/Tag", f"{daily_avg['fett']:.1f} g")
+    
+    st.markdown("---")
+    
+    # Schnellübersicht Wochenplan
+    st.subheader("Geplante Mahlzeiten diese Woche")
+    for tag, mahlzeiten in data["wochenplan"].items():
+        with st.expander(f"**{tag}**"):
+            for mahlzeit, rezept_name in mahlzeiten.items():
+                if rezept_name:
+                    st.write(f"- **{mahlzeit}**: {rezept_name}")
+
+# TAB 2: ZUTATEN
+with tab2:
+    st.header("Zutaten verwalten")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("Neue Zutat hinzufügen")
+        
+        with st.form("neue_zutat"):
+            zutat_name = st.text_input("Name der Zutat")
+            
+            col_a, col_b, col_c, col_d = st.columns(4)
+            with col_a:
+                protein = st.number_input("Protein (g/100g)", min_value=0.0, step=0.1, format="%.1f")
+            with col_b:
+                kohlenhydrate = st.number_input("Kohlenhydrate (g/100g)", min_value=0.0, step=0.1, format="%.1f")
+            with col_c:
+                fett = st.number_input("Fett (g/100g)", min_value=0.0, step=0.1, format="%.1f")
+            with col_d:
+                kalorien = st.number_input("Kalorien (kcal/100g)", min_value=0.0, step=1.0, format="%.0f")
+            
+            kategorie = st.selectbox(
+                "Kategorie",
+                ["Obst & Gemüse", "Fleisch & Fisch", "Milchprodukte", "Getreide & Backwaren", 
+                 "Hülsenfrüchte", "Öle & Fette", "Gewürze & Saucen", "Sonstiges"]
+            )
+            
+            submitted = st.form_submit_button("Zutat hinzufügen")
+            
+            if submitted and zutat_name:
+                if zutat_name in st.session_state.data["zutaten"]:
+                    st.error(f"Zutat '{zutat_name}' existiert bereits!")
+                else:
+                    st.session_state.data["zutaten"][zutat_name] = {
+                        "protein": protein,
+                        "kohlenhydrate": kohlenhydrate,
+                        "fett": fett,
+                        "kalorien": kalorien,
+                        "kategorie": kategorie
+                    }
+                    save_data(st.session_state.data)
+                    st.success(f"Zutat '{zutat_name}' erfolgreich hinzugefügt!")
+                    st.rerun()
+    
+    with col2:
+        st.subheader("Statistik")
+        st.metric("Anzahl Zutaten", len(st.session_state.data["zutaten"]))
+    
+    st.markdown("---")
+    
+    # Zutaten anzeigen
+    st.subheader("Vorhandene Zutaten")
+    
+    if st.session_state.data["zutaten"]:
+        # Gruppiere nach Kategorien
+        kategorien = defaultdict(list)
+        for name, zutat in st.session_state.data["zutaten"].items():
+            kategorien[zutat.get("kategorie", "Sonstiges")].append(name)
+        
+        for kategorie in sorted(kategorien.keys()):
+            with st.expander(f"**{kategorie}** ({len(kategorien[kategorie])} Zutaten)"):
+                for zutat_name in sorted(kategorien[kategorie]):
+                    zutat = st.session_state.data["zutaten"][zutat_name]
+                    
+                    col_a, col_b = st.columns([3, 1])
+                    with col_a:
+                        st.write(f"**{zutat_name}**")
+                        st.write(f"Pro 100g: {zutat['protein']:.1f}g Protein | "
+                               f"{zutat['kohlenhydrate']:.1f}g KH | "
+                               f"{zutat['fett']:.1f}g Fett | "
+                               f"{zutat['kalorien']:.0f} kcal")
+                    with col_b:
+                        if st.button("🗑️ Löschen", key=f"del_zutat_{zutat_name}"):
+                            # Prüfe ob Zutat in Rezepten verwendet wird
+                            used_in = [r for r, data in st.session_state.data["rezepte"].items() 
+                                      if zutat_name in data["zutaten"]]
+                            if used_in:
+                                st.error(f"Zutat wird noch in folgenden Rezepten verwendet: {', '.join(used_in)}")
+                            else:
+                                del st.session_state.data["zutaten"][zutat_name]
+                                save_data(st.session_state.data)
+                                st.success(f"Zutat '{zutat_name}' gelöscht!")
+                                st.rerun()
+                    st.markdown("---")
+    else:
+        st.info("Noch keine Zutaten vorhanden. Füge deine erste Zutat hinzu!")
+
+# TAB 3: REZEPTE
+with tab3:
+    st.header("Rezepte verwalten")
+    
+    if not st.session_state.data["zutaten"]:
+        st.warning("⚠️ Bitte füge zuerst Zutaten hinzu, bevor du Rezepte erstellst!")
+    else:
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            st.subheader("Neues Rezept erstellen")
+            
+            rezept_name = st.text_input("Name des Rezepts", key="rezept_name_input")
+            portionen = st.number_input("Anzahl Portionen", min_value=1, value=1, step=1)
+            
+            st.write("**Zutaten hinzufügen:**")
+            
+            # Dynamische Zutatenliste
+            if 'temp_zutaten' not in st.session_state:
+                st.session_state.temp_zutaten = []
+            
+            col_a, col_b, col_c = st.columns([2, 1, 1])
+            with col_a:
+                selected_zutat = st.selectbox(
+                    "Zutat auswählen",
+                    [""] + sorted(st.session_state.data["zutaten"].keys()),
+                    key="zutat_select"
+                )
+            with col_b:
+                menge = st.number_input("Menge (g)", min_value=0.0, step=10.0, key="menge_input")
+            with col_c:
+                st.write("")
+                st.write("")
+                if st.button("➕ Hinzufügen", key="add_zutat_btn"):
+                    if selected_zutat and menge > 0:
+                        # Prüfe ob Zutat schon in temporärer Liste
+                        existing = next((z for z in st.session_state.temp_zutaten if z[0] == selected_zutat), None)
+                        if existing:
+                            st.warning(f"'{selected_zutat}' ist bereits in der Liste!")
+                        else:
+                            st.session_state.temp_zutaten.append((selected_zutat, menge))
+                            st.rerun()
+            
+            # Zeige hinzugefügte Zutaten
+            if st.session_state.temp_zutaten:
+                st.write("**Aktuelle Zutatenliste:**")
+                for idx, (zutat, menge) in enumerate(st.session_state.temp_zutaten):
+                    col_x, col_y = st.columns([4, 1])
+                    with col_x:
+                        st.write(f"- {zutat}: {menge}g")
+                    with col_y:
+                        if st.button("❌", key=f"remove_temp_zutat_{idx}"):
+                            st.session_state.temp_zutaten.pop(idx)
+                            st.rerun()
+            
+            # Rezept speichern
+            col_save1, col_save2 = st.columns([1, 3])
+            with col_save1:
+                if st.button("💾 Rezept speichern", type="primary"):
+                    if not rezept_name:
+                        st.error("Bitte gib einen Rezeptnamen ein!")
+                    elif not st.session_state.temp_zutaten:
+                        st.error("Bitte füge mindestens eine Zutat hinzu!")
+                    elif rezept_name in st.session_state.data["rezepte"]:
+                        st.error(f"Rezept '{rezept_name}' existiert bereits!")
+                    else:
+                        st.session_state.data["rezepte"][rezept_name] = {
+                            "zutaten": {z: m for z, m in st.session_state.temp_zutaten},
+                            "portionen": portionen
+                        }
+                        save_data(st.session_state.data)
+                        st.session_state.temp_zutaten = []
+                        st.success(f"Rezept '{rezept_name}' erfolgreich gespeichert!")
+                        st.rerun()
+            with col_save2:
+                if st.button("🔄 Zurücksetzen"):
+                    st.session_state.temp_zutaten = []
+                    st.rerun()
+        
+        with col2:
+            st.subheader("Statistik")
+            st.metric("Anzahl Rezepte", len(st.session_state.data["rezepte"]))
+            
+            # Berechne Nährwerte für temporäres Rezept
+            if st.session_state.temp_zutaten:
+                st.write("**Vorschau Nährwerte:**")
+                temp_rezept = {
+                    "zutaten": {z: m for z, m in st.session_state.temp_zutaten},
+                    "portionen": portionen
+                }
+                nutrition = calculate_recipe_nutrition(temp_rezept, st.session_state.data["zutaten"])
+                
+                st.write(f"**Gesamt:**")
+                st.write(f"- {nutrition['kalorien']:.0f} kcal")
+                st.write(f"- {nutrition['protein']:.1f}g Protein")
+                st.write(f"- {nutrition['kohlenhydrate']:.1f}g KH")
+                st.write(f"- {nutrition['fett']:.1f}g Fett")
+                
+                if portionen > 1:
+                    st.write(f"**Pro Portion ({portionen} Portionen):**")
+                    st.write(f"- {nutrition['kalorien']/portionen:.0f} kcal")
+                    st.write(f"- {nutrition['protein']/portionen:.1f}g Protein")
+                    st.write(f"- {nutrition['kohlenhydrate']/portionen:.1f}g KH")
+                    st.write(f"- {nutrition['fett']/portionen:.1f}g Fett")
+        
+        st.markdown("---")
+        
+        # Vorhandene Rezepte anzeigen
+        st.subheader("Vorhandene Rezepte")
+        
+        if st.session_state.data["rezepte"]:
+            for rezept_name, rezept in st.session_state.data["rezepte"].items():
+                with st.expander(f"**{rezept_name}** ({rezept['portionen']} Portion{'en' if rezept['portionen'] > 1 else ''})"):
+                    col_a, col_b = st.columns([2, 1])
+                    
+                    with col_a:
+                        st.write("**Zutaten:**")
+                        for zutat, menge in rezept["zutaten"].items():
+                            if zutat in st.session_state.data["zutaten"]:
+                                st.write(f"- {zutat}: {menge}g")
+                            else:
+                                st.write(f"- {zutat}: {menge}g ⚠️ (Zutat nicht mehr vorhanden)")
+                    
+                    with col_b:
+                        nutrition = calculate_recipe_nutrition(rezept, st.session_state.data["zutaten"])
+                        st.write("**Nährwerte (gesamt):**")
+                        st.write(f"- {nutrition['kalorien']:.0f} kcal")
+                        st.write(f"- {nutrition['protein']:.1f}g Protein")
+                        st.write(f"- {nutrition['kohlenhydrate']:.1f}g KH")
+                        st.write(f"- {nutrition['fett']:.1f}g Fett")
+                        
+                        if rezept['portionen'] > 1:
+                            st.write(f"**Pro Portion:**")
+                            st.write(f"- {nutrition['kalorien']/rezept['portionen']:.0f} kcal")
+                            st.write(f"- {nutrition['protein']/rezept['portionen']:.1f}g Protein")
+                    
+                    if st.button("🗑️ Rezept löschen", key=f"del_rezept_{rezept_name}"):
+                        # Prüfe ob Rezept im Wochenplan verwendet wird
+                        used_in_plan = []
+                        for tag, mahlzeiten in st.session_state.data["wochenplan"].items():
+                            for mahlzeit, r_name in mahlzeiten.items():
+                                if r_name == rezept_name:
+                                    used_in_plan.append(f"{tag} ({mahlzeit})")
+                        
+                        if used_in_plan:
+                            st.error(f"Rezept wird noch im Wochenplan verwendet: {', '.join(used_in_plan)}")
+                        else:
+                            del st.session_state.data["rezepte"][rezept_name]
+                            save_data(st.session_state.data)
+                            st.success(f"Rezept '{rezept_name}' gelöscht!")
+                            st.rerun()
+        else:
+            st.info("Noch keine Rezepte vorhanden. Erstelle dein erstes Rezept!")
+
+# TAB 4: WOCHENPLAN
+with tab4:
+    st.header("Wochenplan zusammenstellen")
+    
+    if not st.session_state.data["rezepte"]:
+        st.warning("⚠️ Bitte erstelle zuerst Rezepte, bevor du deinen Wochenplan erstellst!")
+    else:
+        rezept_optionen = ["Keine Mahlzeit"] + sorted(st.session_state.data["rezepte"].keys())
+        
+        for tag in ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]:
+            st.subheader(tag)
+            
+            cols = st.columns(4)
+            for idx, mahlzeit in enumerate(["Frühstück", "Mittagessen", "Abendessen", "Snacks"]):
+                with cols[idx]:
+                    current_value = st.session_state.data["wochenplan"][tag][mahlzeit]
+                    if current_value not in rezept_optionen:
+                        current_value = "Keine Mahlzeit"
+                    
+                    selected = st.selectbox(
+                        mahlzeit,
+                        rezept_optionen,
+                        index=rezept_optionen.index(current_value),
+                        key=f"{tag}_{mahlzeit}"
+                    )
+                    
+                    # Speichere Auswahl
+                    new_value = None if selected == "Keine Mahlzeit" else selected
+                    if st.session_state.data["wochenplan"][tag][mahlzeit] != new_value:
+                        st.session_state.data["wochenplan"][tag][mahlzeit] = new_value
+                        save_data(st.session_state.data)
+                    
+                    # Zeige Nährwerte wenn Rezept ausgewählt
+                    if new_value and new_value in st.session_state.data["rezepte"]:
+                        nutrition = calculate_recipe_nutrition(
+                            st.session_state.data["rezepte"][new_value],
+                            st.session_state.data["zutaten"]
+                        )
+                        portionen = st.session_state.data["rezepte"][new_value]["portionen"]
+                        
+                        with st.expander("Nährwerte"):
+                            if portionen > 1:
+                                st.caption(f"Pro Portion (von {portionen}):")
+                                st.write(f"{nutrition['kalorien']/portionen:.0f} kcal")
+                                st.write(f"{nutrition['protein']/portionen:.1f}g P")
+                                st.write(f"{nutrition['kohlenhydrate']/portionen:.1f}g KH")
+                                st.write(f"{nutrition['fett']/portionen:.1f}g F")
+                            else:
+                                st.write(f"{nutrition['kalorien']:.0f} kcal")
+                                st.write(f"{nutrition['protein']:.1f}g P")
+                                st.write(f"{nutrition['kohlenhydrate']:.1f}g KH")
+                                st.write(f"{nutrition['fett']:.1f}g F")
+            
+            st.markdown("---")
+        
+        # Button zum Zurücksetzen des Wochenplans
+        if st.button("🔄 Gesamten Wochenplan zurücksetzen", type="secondary"):
+            for tag in st.session_state.data["wochenplan"]:
+                for mahlzeit in st.session_state.data["wochenplan"][tag]:
+                    st.session_state.data["wochenplan"][tag][mahlzeit] = None
+            save_data(st.session_state.data)
+            st.success("Wochenplan zurückgesetzt!")
+            st.rerun()
+
+# TAB 5: EINKAUFSLISTE
+with tab5:
+    st.header("Einkaufsliste")
+    
+    einkaufsliste = generate_shopping_list(st.session_state.data)
+    
+    if not einkaufsliste:
+        st.info("Dein Wochenplan ist leer. Füge Rezepte hinzu, um eine Einkaufsliste zu erstellen!")
+    else:
+        st.success(f"✅ Einkaufsliste für {len(einkaufsliste)} verschiedene Zutaten generiert!")
+        
+        # Gruppiere nach Kategorien
+        kategorisierte_liste = defaultdict(list)
+        for zutat_name, menge in sorted(einkaufsliste.items()):
+            if zutat_name in st.session_state.data["zutaten"]:
+                kategorie = st.session_state.data["zutaten"][zutat_name].get("kategorie", "Sonstiges")
+            else:
+                kategorie = "Unbekannt"
+            kategorisierte_liste[kategorie].append((zutat_name, menge))
+        
+        # Zeige nach Kategorien sortiert
+        for kategorie in sorted(kategorisierte_liste.keys()):
+            st.subheader(kategorie)
+            for zutat_name, menge in kategorisierte_liste[kategorie]:
+                # Runde auf sinnvolle Werte
+                if menge >= 1000:
+                    st.write(f"☐ **{zutat_name}**: {menge/1000:.2f} kg")
+                else:
+                    st.write(f"☐ **{zutat_name}**: {menge:.0f} g")
+            st.markdown("---")
+        
+        # Export-Optionen
+        st.subheader("Export")
+        
+        # Textformat für Clipboard
+        text_liste = "EINKAUFSLISTE\n" + "="*50 + "\n\n"
+        for kategorie in sorted(kategorisierte_liste.keys()):
+            text_liste += f"{kategorie.upper()}\n" + "-"*30 + "\n"
+            for zutat_name, menge in kategorisierte_liste[kategorie]:
+                if menge >= 1000:
+                    text_liste += f"☐ {zutat_name}: {menge/1000:.2f} kg\n"
+                else:
+                    text_liste += f"☐ {zutat_name}: {menge:.0f} g\n"
+            text_liste += "\n"
+        
+        text_liste += f"\nErstellt am: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+        
+        st.text_area("Kopiere diese Liste:", text_liste, height=300)
+        
+        st.caption("💡 Tipp: Kopiere den Text und füge ihn in eine Notiz-App auf deinem Smartphone ein!")
+
+# Footer
+st.markdown("---")
+st.caption("Ernährungsplaner v1.0 | Erstellt mit Streamlit")
