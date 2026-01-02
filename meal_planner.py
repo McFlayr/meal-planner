@@ -111,12 +111,13 @@ st.title("🍽️ Ernährungsplaner")
 st.markdown("---")
 
 # Tabs für verschiedene Bereiche
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Dashboard", 
     "🥕 Zutaten", 
     "📖 Rezepte", 
     "📅 Wochenplan", 
-    "🛒 Einkaufsliste"
+    "🛒 Einkaufsliste",
+    "💾 Backup"
 ])
 
 # TAB 1: DASHBOARD
@@ -798,6 +799,209 @@ with tab5:
         
         st.caption("💡 Tipp: Kopiere den Text und füge ihn in eine Notiz-App auf deinem Smartphone ein!")
 
+# TAB 6: BACKUP
+with tab6:
+    st.header("💾 Backup & Wiederherstellung")
+    
+    st.info("""
+    **Wichtig:** Bei jedem Deployment der App werden lokale Daten gelöscht. 
+    Sichere deine Daten regelmäßig mit der Export-Funktion!
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    # EXPORT
+    with col1:
+        st.subheader("📤 Daten exportieren")
+        
+        # Statistiken
+        data = st.session_state.data
+        total_meals = sum(len(mahlzeiten) for mahlzeiten in data["wochenplan"].values())
+        
+        st.write("**Aktueller Datenstand:**")
+        st.write(f"- 🥕 {len(data['zutaten'])} Zutaten")
+        st.write(f"- 📖 {len(data['rezepte'])} Rezepte")
+        st.write(f"- 📅 {total_meals} geplante Mahlzeiten")
+        
+        st.markdown("---")
+        
+        # Export-Button
+        export_data = json.dumps(st.session_state.data, ensure_ascii=False, indent=2)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"ernaehrungsplaner_backup_{timestamp}.json"
+        
+        st.download_button(
+            label="📥 Backup herunterladen",
+            data=export_data,
+            file_name=filename,
+            mime="application/json",
+            type="primary",
+            help="Lade alle deine Daten als JSON-Datei herunter"
+        )
+        
+        st.caption("💡 Speichere die Datei an einem sicheren Ort (z.B. Cloud, USB-Stick)")
+    
+    # IMPORT
+    with col2:
+        st.subheader("📥 Daten importieren")
+        
+        uploaded_backup = st.file_uploader(
+            "Wähle eine Backup-Datei",
+            type=["json"],
+            help="Lade eine zuvor exportierte Backup-Datei hoch"
+        )
+        
+        if uploaded_backup is not None:
+            try:
+                # Lade JSON-Datei
+                backup_content = uploaded_backup.read().decode('utf-8')
+                backup_data = json.loads(backup_content)
+                
+                # Validiere Struktur
+                required_keys = ["zutaten", "rezepte", "wochenplan"]
+                missing_keys = [key for key in required_keys if key not in backup_data]
+                
+                if missing_keys:
+                    st.error(f"❌ Ungültige Backup-Datei! Fehlende Daten: {', '.join(missing_keys)}")
+                else:
+                    # Zeige Vorschau
+                    st.success("✅ Backup-Datei erfolgreich geladen!")
+                    
+                    total_meals_backup = sum(
+                        len(mahlzeiten) for mahlzeiten in backup_data["wochenplan"].values()
+                    )
+                    
+                    st.write("**Im Backup enthalten:**")
+                    st.write(f"- 🥕 {len(backup_data['zutaten'])} Zutaten")
+                    st.write(f"- 📖 {len(backup_data['rezepte'])} Rezepte")
+                    st.write(f"- 📅 {total_meals_backup} geplante Mahlzeiten")
+                    
+                    st.markdown("---")
+                    
+                    # Import-Optionen
+                    import_mode = st.radio(
+                        "Import-Modus",
+                        [
+                            "Ersetzen (Alle aktuellen Daten löschen)",
+                            "Zusammenführen (Duplikate überschreiben)",
+                            "Zusammenführen (Duplikate behalten)"
+                        ],
+                        help="Wähle, wie mit bestehenden Daten umgegangen werden soll"
+                    )
+                    
+                    st.markdown("---")
+                    
+                    # Import-Button
+                    col_import1, col_import2 = st.columns([1, 1])
+                    
+                    with col_import1:
+                        if st.button("✅ Jetzt importieren", type="primary", key="import_backup_btn"):
+                            try:
+                                if import_mode == "Ersetzen (Alle aktuellen Daten löschen)":
+                                    # Kompletter Ersatz
+                                    st.session_state.data = backup_data
+                                    save_data(st.session_state.data)
+                                    st.success("✅ Daten erfolgreich wiederhergestellt!")
+                                    st.balloons()
+                                    st.rerun()
+                                
+                                elif import_mode == "Zusammenführen (Duplikate überschreiben)":
+                                    # Zusammenführen mit Überschreiben
+                                    st.session_state.data["zutaten"].update(backup_data["zutaten"])
+                                    st.session_state.data["rezepte"].update(backup_data["rezepte"])
+                                    
+                                    # Wochenplan zusammenführen
+                                    for tag, mahlzeiten in backup_data["wochenplan"].items():
+                                        if tag in st.session_state.data["wochenplan"]:
+                                            # Füge neue Mahlzeiten hinzu
+                                            existing_times = {m["zeit"] for m in st.session_state.data["wochenplan"][tag]}
+                                            for mahlzeit in mahlzeiten:
+                                                # Überschreibe wenn Zeit schon existiert, sonst füge hinzu
+                                                st.session_state.data["wochenplan"][tag] = [
+                                                    m for m in st.session_state.data["wochenplan"][tag]
+                                                    if m["zeit"] != mahlzeit["zeit"]
+                                                ]
+                                                st.session_state.data["wochenplan"][tag].append(mahlzeit)
+                                            # Sortiere nach Zeit
+                                            st.session_state.data["wochenplan"][tag].sort(key=lambda x: x["zeit"])
+                                    
+                                    save_data(st.session_state.data)
+                                    st.success("✅ Daten erfolgreich zusammengeführt!")
+                                    st.balloons()
+                                    st.rerun()
+                                
+                                elif import_mode == "Zusammenführen (Duplikate behalten)":
+                                    # Zusammenführen ohne Überschreiben
+                                    added_zutaten = 0
+                                    added_rezepte = 0
+                                    
+                                    for name, data_zutat in backup_data["zutaten"].items():
+                                        if name not in st.session_state.data["zutaten"]:
+                                            st.session_state.data["zutaten"][name] = data_zutat
+                                            added_zutaten += 1
+                                    
+                                    for name, rezept in backup_data["rezepte"].items():
+                                        if name not in st.session_state.data["rezepte"]:
+                                            st.session_state.data["rezepte"][name] = rezept
+                                            added_rezepte += 1
+                                    
+                                    # Wochenplan: Füge nur neue Zeiten hinzu
+                                    added_meals = 0
+                                    for tag, mahlzeiten in backup_data["wochenplan"].items():
+                                        if tag in st.session_state.data["wochenplan"]:
+                                            existing_times = {m["zeit"] for m in st.session_state.data["wochenplan"][tag]}
+                                            for mahlzeit in mahlzeiten:
+                                                if mahlzeit["zeit"] not in existing_times:
+                                                    st.session_state.data["wochenplan"][tag].append(mahlzeit)
+                                                    added_meals += 1
+                                            # Sortiere nach Zeit
+                                            st.session_state.data["wochenplan"][tag].sort(key=lambda x: x["zeit"])
+                                    
+                                    save_data(st.session_state.data)
+                                    st.success(f"✅ Hinzugefügt: {added_zutaten} Zutaten, {added_rezepte} Rezepte, {added_meals} Mahlzeiten")
+                                    st.balloons()
+                                    st.rerun()
+                            
+                            except Exception as e:
+                                st.error(f"❌ Fehler beim Import: {str(e)}")
+                    
+                    with col_import2:
+                        if st.button("❌ Abbrechen", key="cancel_import_btn"):
+                            st.rerun()
+            
+            except json.JSONDecodeError:
+                st.error("❌ Ungültige JSON-Datei! Bitte wähle eine gültige Backup-Datei.")
+            except Exception as e:
+                st.error(f"❌ Fehler beim Lesen der Datei: {str(e)}")
+    
+    st.markdown("---")
+    
+    # Best Practices
+    st.subheader("📋 Backup Best Practices")
+    
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.write("**Wann solltest du ein Backup machen?**")
+        st.write("- ✅ Vor jedem App-Update/Deployment")
+        st.write("- ✅ Nach größeren Änderungen (viele neue Rezepte)")
+        st.write("- ✅ Regelmäßig (z.B. wöchentlich)")
+        st.write("- ✅ Vor dem Löschen von Daten")
+    
+    with col_b:
+        st.write("**Wo solltest du Backups speichern?**")
+        st.write("- ✅ Cloud-Speicher (Google Drive, Dropbox)")
+        st.write("- ✅ Lokaler Computer")
+        st.write("- ✅ USB-Stick/externe Festplatte")
+        st.write("- ❌ Nicht nur auf dem Smartphone!")
+    
+    st.markdown("---")
+    
+    # Automatisches Backup erinnern
+    if total_meals > 5 or len(data['rezepte']) > 3:
+        st.warning("⚠️ Du hast bereits einige Daten eingegeben. Vergiss nicht, ein Backup zu erstellen!")
+
 # Footer
 st.markdown("---")
-st.caption("Ernährungsplaner v1.0 | Erstellt mit Streamlit")
+st.caption("Ernährungsplaner v2.0 | Erstellt mit Streamlit")
