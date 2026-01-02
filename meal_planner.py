@@ -3,6 +3,8 @@ import json
 import os
 from datetime import datetime
 from collections import defaultdict
+import pandas as pd
+import io
 
 # Konfiguration
 st.set_page_config(
@@ -193,6 +195,182 @@ with tab2:
     with col2:
         st.subheader("Statistik")
         st.metric("Anzahl Zutaten", len(st.session_state.data["zutaten"]))
+    
+    st.markdown("---")
+    
+    # CSV Import
+    st.subheader("📥 Zutaten aus CSV importieren")
+    
+    with st.expander("CSV-Import Anleitung"):
+        st.write("""
+        **CSV-Format:**
+        Die CSV-Datei sollte folgende Spalten enthalten (mit Komma oder Semikolon getrennt):
+        - `Name` - Name der Zutat
+        - `Protein` - Protein in g/100g
+        - `Kohlenhydrate` - Kohlenhydrate in g/100g
+        - `Fette` oder `Fett` - Fett in g/100g
+        - `Kcal` oder `Kalorien` - Kalorien in kcal/100g
+        - `Kategorie` (optional) - Kategorie der Zutat
+        
+        **Beispiel:**
+        ```
+        Name,Protein,Kohlenhydrate,Fette,Kcal,Kategorie
+        Hähnchenbrust,23.0,0.0,1.2,110,Fleisch & Fisch
+        Reis,7.0,77.0,0.6,350,Getreide & Backwaren
+        Brokkoli,3.0,7.0,0.4,34,Obst & Gemüse
+        ```
+        """)
+        
+        # Download Beispiel-CSV
+        example_csv = "Name,Protein,Kohlenhydrate,Fette,Kcal,Kategorie\n"
+        example_csv += "Hähnchenbrust,23.0,0.0,1.2,110,Fleisch & Fisch\n"
+        example_csv += "Reis,7.0,77.0,0.6,350,Getreide & Backwaren\n"
+        example_csv += "Brokkoli,3.0,7.0,0.4,34,Obst & Gemüse\n"
+        
+        st.download_button(
+            label="📥 Beispiel-CSV herunterladen",
+            data=example_csv,
+            file_name="zutaten_beispiel.csv",
+            mime="text/csv"
+        )
+    
+    uploaded_file = st.file_uploader(
+        "Wähle eine CSV-Datei aus",
+        type=["csv"],
+        help="CSV-Datei mit Zutaten hochladen"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Versuche verschiedene Trennzeichen
+            content = uploaded_file.read().decode('utf-8')
+            
+            # Erkenne Trennzeichen
+            if ';' in content.split('\n')[0]:
+                df = pd.read_csv(io.StringIO(content), sep=';')
+            else:
+                df = pd.read_csv(io.StringIO(content))
+            
+            # Normalisiere Spaltennamen (entferne Leerzeichen, Kleinbuchstaben)
+            df.columns = df.columns.str.strip().str.lower()
+            
+            # Mapping für verschiedene Spaltennamen
+            column_mapping = {
+                'name': 'Name',
+                'protein': 'Protein',
+                'kohlenhydrate': 'Kohlenhydrate',
+                'fette': 'Fette',
+                'fett': 'Fette',
+                'kcal': 'Kcal',
+                'kalorien': 'Kcal',
+                'kategorie': 'Kategorie'
+            }
+            
+            # Benenne Spalten um
+            for old_name, new_name in column_mapping.items():
+                if old_name in df.columns:
+                    df.rename(columns={old_name: new_name}, inplace=True)
+            
+            # Prüfe erforderliche Spalten
+            required = ['Name', 'Protein', 'Kohlenhydrate', 'Fette', 'Kcal']
+            missing = [col for col in required if col not in df.columns]
+            
+            if missing:
+                st.error(f"❌ Fehlende Spalten: {', '.join(missing)}")
+                st.write("Gefundene Spalten:", list(df.columns))
+            else:
+                # Füge Kategorie hinzu, falls nicht vorhanden
+                if 'Kategorie' not in df.columns:
+                    df['Kategorie'] = 'Sonstiges'
+                
+                # Vorschau
+                st.success(f"✅ CSV erfolgreich geladen: {len(df)} Zutaten gefunden")
+                st.write("**Vorschau:**")
+                st.dataframe(df.head(10))
+                
+                # Standard-Kategorie für fehlende Werte
+                default_kategorie = st.selectbox(
+                    "Standard-Kategorie für Zutaten ohne Kategorie",
+                    ["Obst & Gemüse", "Fleisch & Fisch", "Milchprodukte", "Getreide & Backwaren", 
+                     "Hülsenfrüchte", "Öle & Fette", "Gewürze & Saucen", "Sonstiges"],
+                    index=7
+                )
+                
+                # Duplikat-Handling
+                existing_names = set(st.session_state.data["zutaten"].keys())
+                new_names = set(df['Name'].values)
+                duplicates = existing_names.intersection(new_names)
+                
+                if duplicates:
+                    st.warning(f"⚠️ {len(duplicates)} Zutaten existieren bereits:")
+                    st.write(", ".join(sorted(duplicates)))
+                    
+                    duplicate_action = st.radio(
+                        "Was soll mit Duplikaten passieren?",
+                        ["Überspringen", "Überschreiben"],
+                        horizontal=True
+                    )
+                else:
+                    duplicate_action = "Überspringen"
+                
+                # Import-Button
+                col_import1, col_import2 = st.columns([1, 3])
+                with col_import1:
+                    if st.button("✅ Zutaten importieren", type="primary"):
+                        imported = 0
+                        skipped = 0
+                        errors = []
+                        
+                        for idx, row in df.iterrows():
+                            try:
+                                name = str(row['Name']).strip()
+                                
+                                # Prüfe Duplikat
+                                if name in existing_names:
+                                    if duplicate_action == "Überspringen":
+                                        skipped += 1
+                                        continue
+                                
+                                # Kategorie handling
+                                kategorie = row.get('Kategorie', default_kategorie)
+                                if pd.isna(kategorie) or kategorie == '':
+                                    kategorie = default_kategorie
+                                
+                                # Erstelle Zutat
+                                st.session_state.data["zutaten"][name] = {
+                                    "protein": float(row['Protein']),
+                                    "kohlenhydrate": float(row['Kohlenhydrate']),
+                                    "fett": float(row['Fette']),
+                                    "kalorien": float(row['Kcal']),
+                                    "kategorie": kategorie
+                                }
+                                imported += 1
+                                
+                            except Exception as e:
+                                errors.append(f"Zeile {idx + 2}: {str(e)}")
+                        
+                        # Speichern
+                        save_data(st.session_state.data)
+                        
+                        # Feedback
+                        if imported > 0:
+                            st.success(f"✅ {imported} Zutaten erfolgreich importiert!")
+                        if skipped > 0:
+                            st.info(f"ℹ️ {skipped} Zutaten übersprungen (bereits vorhanden)")
+                        if errors:
+                            st.error("❌ Fehler beim Import:")
+                            for error in errors[:5]:  # Zeige maximal 5 Fehler
+                                st.write(f"- {error}")
+                        
+                        st.rerun()
+                
+                with col_import2:
+                    if st.button("🔄 CSV zurücksetzen"):
+                        st.rerun()
+        
+        except Exception as e:
+            st.error(f"❌ Fehler beim Lesen der CSV-Datei: {str(e)}")
+            st.write("Stelle sicher, dass die Datei UTF-8 kodiert ist und das richtige Format hat.")
     
     st.markdown("---")
     
