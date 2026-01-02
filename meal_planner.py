@@ -21,18 +21,48 @@ def load_data():
     """Lädt Daten aus JSON-Datei"""
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            
+            # Migration von altem Format zu neuem Format
+            if "wochenplan" in data and data["wochenplan"]:
+                first_day = list(data["wochenplan"].values())[0]
+                # Prüfe ob altes Format (dict mit Mahlzeiten)
+                if isinstance(first_day, dict) and not isinstance(first_day, list):
+                    print("Migriere altes Wochenplan-Format...")
+                    new_wochenplan = {}
+                    time_mapping = {
+                        "Frühstück": "08:00",
+                        "Mittagessen": "12:00",
+                        "Abendessen": "18:00",
+                        "Snacks": "15:00"
+                    }
+                    for tag, mahlzeiten in data["wochenplan"].items():
+                        new_wochenplan[tag] = []
+                        for mahlzeit_name, rezept in mahlzeiten.items():
+                            if rezept:
+                                new_wochenplan[tag].append({
+                                    "zeit": time_mapping.get(mahlzeit_name, "12:00"),
+                                    "rezept": rezept
+                                })
+                        # Sortiere nach Zeit
+                        new_wochenplan[tag].sort(key=lambda x: x["zeit"])
+                    data["wochenplan"] = new_wochenplan
+                    # Speichere migrierte Daten
+                    save_data(data)
+            
+            return data
+    
     return {
         "zutaten": {},
         "rezepte": {},
         "wochenplan": {
-            "Montag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
-            "Dienstag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
-            "Mittwoch": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
-            "Donnerstag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
-            "Freitag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
-            "Samstag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None},
-            "Sonntag": {"Frühstück": None, "Mittagessen": None, "Abendessen": None, "Snacks": None}
+            "Montag": [],
+            "Dienstag": [],
+            "Mittwoch": [],
+            "Donnerstag": [],
+            "Freitag": [],
+            "Samstag": [],
+            "Sonntag": []
         }
     }
 
@@ -62,7 +92,9 @@ def generate_shopping_list(data):
     einkaufsliste = defaultdict(float)
     
     for tag, mahlzeiten in data["wochenplan"].items():
-        for mahlzeit, rezept_name in mahlzeiten.items():
+        # mahlzeiten ist jetzt eine Liste von Dicts mit {zeit, rezept}
+        for mahlzeit in mahlzeiten:
+            rezept_name = mahlzeit.get("rezept")
             if rezept_name and rezept_name in data["rezepte"]:
                 rezept = data["rezepte"][rezept_name]
                 for zutat, menge in rezept["zutaten"].items():
@@ -98,7 +130,9 @@ with tab1:
     meal_count = 0
     
     for tag, mahlzeiten in data["wochenplan"].items():
-        for mahlzeit, rezept_name in mahlzeiten.items():
+        # mahlzeiten ist jetzt eine Liste
+        for mahlzeit in mahlzeiten:
+            rezept_name = mahlzeit.get("rezept")
             if rezept_name and rezept_name in data["rezepte"]:
                 meal_count += 1
                 nutrition = calculate_recipe_nutrition(
@@ -142,10 +176,10 @@ with tab1:
     # Schnellübersicht Wochenplan
     st.subheader("Geplante Mahlzeiten diese Woche")
     for tag, mahlzeiten in data["wochenplan"].items():
-        with st.expander(f"**{tag}**"):
-            for mahlzeit, rezept_name in mahlzeiten.items():
-                if rezept_name:
-                    st.write(f"- **{mahlzeit}**: {rezept_name}")
+        if mahlzeiten:  # Nur anzeigen wenn Mahlzeiten vorhanden
+            with st.expander(f"**{tag}** ({len(mahlzeiten)} Mahlzeit{'en' if len(mahlzeiten) != 1 else ''})"):
+                for mahlzeit in sorted(mahlzeiten, key=lambda x: x["zeit"]):
+                    st.write(f"- **{mahlzeit['zeit']} Uhr**: {mahlzeit['rezept']}")
 
 # TAB 2: ZUTATEN
 with tab2:
@@ -551,9 +585,9 @@ with tab3:
                         # Prüfe ob Rezept im Wochenplan verwendet wird
                         used_in_plan = []
                         for tag, mahlzeiten in st.session_state.data["wochenplan"].items():
-                            for mahlzeit, r_name in mahlzeiten.items():
-                                if r_name == rezept_name:
-                                    used_in_plan.append(f"{tag} ({mahlzeit})")
+                            for mahlzeit in mahlzeiten:
+                                if mahlzeit.get("rezept") == rezept_name:
+                                    used_in_plan.append(f"{tag} ({mahlzeit['zeit']} Uhr)")
                         
                         if used_in_plan:
                             st.error(f"Rezept wird noch im Wochenplan verwendet: {', '.join(used_in_plan)}")
@@ -572,62 +606,146 @@ with tab4:
     if not st.session_state.data["rezepte"]:
         st.warning("⚠️ Bitte erstelle zuerst Rezepte, bevor du deinen Wochenplan erstellst!")
     else:
-        rezept_optionen = ["Keine Mahlzeit"] + sorted(st.session_state.data["rezepte"].keys())
+        # Wähle Tag aus
+        selected_day = st.selectbox(
+            "Wähle einen Tag",
+            ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"],
+            key="day_selector"
+        )
         
-        for tag in ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]:
-            st.subheader(tag)
-            
-            cols = st.columns(4)
-            for idx, mahlzeit in enumerate(["Frühstück", "Mittagessen", "Abendessen", "Snacks"]):
-                with cols[idx]:
-                    current_value = st.session_state.data["wochenplan"][tag][mahlzeit]
-                    if current_value not in rezept_optionen:
-                        current_value = "Keine Mahlzeit"
+        st.markdown("---")
+        
+        # Zeige Mahlzeiten für ausgewählten Tag
+        st.subheader(f"Mahlzeiten für {selected_day}")
+        
+        mahlzeiten = st.session_state.data["wochenplan"][selected_day]
+        
+        # Sortiere nach Zeit
+        mahlzeiten.sort(key=lambda x: x["zeit"])
+        
+        # Zeige vorhandene Mahlzeiten
+        if mahlzeiten:
+            for idx, mahlzeit in enumerate(mahlzeiten):
+                col1, col2, col3 = st.columns([1, 3, 1])
+                
+                with col1:
+                    st.write(f"**{mahlzeit['zeit']} Uhr**")
+                
+                with col2:
+                    rezept_name = mahlzeit["rezept"]
+                    st.write(f"**{rezept_name}**")
                     
-                    selected = st.selectbox(
-                        mahlzeit,
-                        rezept_optionen,
-                        index=rezept_optionen.index(current_value),
-                        key=f"{tag}_{mahlzeit}"
-                    )
-                    
-                    # Speichere Auswahl
-                    new_value = None if selected == "Keine Mahlzeit" else selected
-                    if st.session_state.data["wochenplan"][tag][mahlzeit] != new_value:
-                        st.session_state.data["wochenplan"][tag][mahlzeit] = new_value
-                        save_data(st.session_state.data)
-                    
-                    # Zeige Nährwerte wenn Rezept ausgewählt
-                    if new_value and new_value in st.session_state.data["rezepte"]:
+                    # Zeige Nährwerte
+                    if rezept_name in st.session_state.data["rezepte"]:
                         nutrition = calculate_recipe_nutrition(
-                            st.session_state.data["rezepte"][new_value],
+                            st.session_state.data["rezepte"][rezept_name],
                             st.session_state.data["zutaten"]
                         )
-                        portionen = st.session_state.data["rezepte"][new_value]["portionen"]
+                        portionen = st.session_state.data["rezepte"][rezept_name]["portionen"]
                         
-                        with st.expander("Nährwerte"):
-                            if portionen > 1:
-                                st.caption(f"Pro Portion (von {portionen}):")
-                                st.write(f"{nutrition['kalorien']/portionen:.0f} kcal")
-                                st.write(f"{nutrition['protein']/portionen:.1f}g P")
-                                st.write(f"{nutrition['kohlenhydrate']/portionen:.1f}g KH")
-                                st.write(f"{nutrition['fett']/portionen:.1f}g F")
-                            else:
-                                st.write(f"{nutrition['kalorien']:.0f} kcal")
-                                st.write(f"{nutrition['protein']:.1f}g P")
-                                st.write(f"{nutrition['kohlenhydrate']:.1f}g KH")
-                                st.write(f"{nutrition['fett']:.1f}g F")
-            
-            st.markdown("---")
+                        if portionen > 1:
+                            st.caption(f"Pro Portion: {nutrition['kalorien']/portionen:.0f} kcal | "
+                                     f"{nutrition['protein']/portionen:.1f}g P | "
+                                     f"{nutrition['kohlenhydrate']/portionen:.1f}g KH | "
+                                     f"{nutrition['fett']/portionen:.1f}g F")
+                        else:
+                            st.caption(f"{nutrition['kalorien']:.0f} kcal | "
+                                     f"{nutrition['protein']:.1f}g P | "
+                                     f"{nutrition['kohlenhydrate']:.1f}g KH | "
+                                     f"{nutrition['fett']:.1f}g F")
+                
+                with col3:
+                    if st.button("🗑️", key=f"del_{selected_day}_{idx}", help="Mahlzeit löschen"):
+                        st.session_state.data["wochenplan"][selected_day].pop(idx)
+                        save_data(st.session_state.data)
+                        st.rerun()
+                
+                st.markdown("---")
+        else:
+            st.info(f"Noch keine Mahlzeiten für {selected_day} geplant.")
         
-        # Button zum Zurücksetzen des Wochenplans
-        if st.button("🔄 Gesamten Wochenplan zurücksetzen", type="secondary"):
-            for tag in st.session_state.data["wochenplan"]:
-                for mahlzeit in st.session_state.data["wochenplan"][tag]:
-                    st.session_state.data["wochenplan"][tag][mahlzeit] = None
-            save_data(st.session_state.data)
-            st.success("Wochenplan zurückgesetzt!")
-            st.rerun()
+        # Neue Mahlzeit hinzufügen
+        st.subheader("➕ Neue Mahlzeit hinzufügen")
+        
+        col_a, col_b, col_c = st.columns([1, 2, 1])
+        
+        with col_a:
+            # Zeit-Eingabe
+            neue_zeit = st.time_input(
+                "Uhrzeit",
+                value=None,
+                key=f"time_input_{selected_day}"
+            )
+        
+        with col_b:
+            # Rezept-Auswahl
+            rezept_optionen = sorted(st.session_state.data["rezepte"].keys())
+            neues_rezept = st.selectbox(
+                "Rezept",
+                [""] + rezept_optionen,
+                key=f"rezept_select_{selected_day}"
+            )
+        
+        with col_c:
+            st.write("")
+            st.write("")
+            if st.button("✅ Hinzufügen", type="primary", key=f"add_meal_{selected_day}"):
+                if not neue_zeit:
+                    st.error("Bitte wähle eine Uhrzeit!")
+                elif not neues_rezept:
+                    st.error("Bitte wähle ein Rezept!")
+                else:
+                    # Formatiere Zeit als String
+                    zeit_str = neue_zeit.strftime("%H:%M")
+                    
+                    # Füge Mahlzeit hinzu
+                    st.session_state.data["wochenplan"][selected_day].append({
+                        "zeit": zeit_str,
+                        "rezept": neues_rezept
+                    })
+                    
+                    # Sortiere nach Zeit
+                    st.session_state.data["wochenplan"][selected_day].sort(key=lambda x: x["zeit"])
+                    
+                    save_data(st.session_state.data)
+                    st.success(f"Mahlzeit um {zeit_str} Uhr hinzugefügt!")
+                    st.rerun()
+        
+        st.markdown("---")
+        
+        # Wochenübersicht
+        st.subheader("📅 Wochenübersicht")
+        
+        for tag in ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]:
+            mahlzeiten_tag = st.session_state.data["wochenplan"][tag]
+            
+            if mahlzeiten_tag:
+                with st.expander(f"**{tag}** ({len(mahlzeiten_tag)} Mahlzeit{'en' if len(mahlzeiten_tag) != 1 else ''})"):
+                    for mahlzeit in sorted(mahlzeiten_tag, key=lambda x: x["zeit"]):
+                        col_x, col_y = st.columns([1, 3])
+                        with col_x:
+                            st.write(f"**{mahlzeit['zeit']}**")
+                        with col_y:
+                            st.write(mahlzeit['rezept'])
+        
+        st.markdown("---")
+        
+        # Button zum Zurücksetzen
+        col_reset1, col_reset2, col_reset3 = st.columns([1, 2, 1])
+        with col_reset1:
+            if st.button(f"🔄 {selected_day} leeren", type="secondary"):
+                st.session_state.data["wochenplan"][selected_day] = []
+                save_data(st.session_state.data)
+                st.success(f"{selected_day} wurde geleert!")
+                st.rerun()
+        
+        with col_reset3:
+            if st.button("🗑️ Ganze Woche leeren", type="secondary"):
+                for tag in st.session_state.data["wochenplan"]:
+                    st.session_state.data["wochenplan"][tag] = []
+                save_data(st.session_state.data)
+                st.success("Wochenplan komplett zurückgesetzt!")
+                st.rerun()
 
 # TAB 5: EINKAUFSLISTE
 with tab5:
